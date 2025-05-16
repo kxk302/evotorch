@@ -20,6 +20,7 @@ __all__ = (
     "GymNE",
     "NEProblem",
     "SupervisedNE",
+    "SupervisedTransformerNE",
     "VecGymNE",
     "net",
     "baseneproblem",
@@ -29,4 +30,5 @@ from . import baseneproblem, net
 from .gymne import GymNE
 from .neproblem import NEProblem
 from .supervisedne import SupervisedNE
+from .supervisedtransformerne import SupervisedTransformerNE
 from .vecgymne import VecGymNE
