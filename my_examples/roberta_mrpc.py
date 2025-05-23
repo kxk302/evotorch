@@ -15,13 +15,16 @@ from evotorch.neuroevolution.net import count_parameters
 number_of_generations = 200
 population_size = 12
 minibatch_size = 32
-model_name_or_path = "roberta-large"
 radius_init = 0.1
 # subbatch_size = population_size // 2
 searcher = None
 mrpc_training_dataset = None
 train_dataloader = None
 device = "cpu"
+model_name_or_path = "roberta-large"
+model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
+peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
+model_with_adapter = get_peft_model(model, peft_config)
 
 
 # Print the accuracy and F1 measure for
@@ -32,13 +35,29 @@ def evaluate_best_solution_in_generation():
     # Flattened parameters from EvoTorch (1D tensor)
     param_vector = pop_best_solution.values
 
-    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
-    model = get_peft_model(model, peft_config)
-    model = vector_to_model(model, param_vector)
+    model = vector_to_model(model_with_adapter, param_vector)
 
     accuracy, f1 = get_accuracy_and_f1(model)
 
     print(f"Accuracy: {accuracy:.4f}, F1 Score: {f1:.4f}")
+
+
+# Convert param_vector to model state_dict. Then call
+# load_state_dict() on model and return the model
+def vector_to_model(model, param_vector):
+    state_dict = model.state_dict()
+    new_state_dict = {}
+    pointer = 0
+
+    for name, param in state_dict.items():
+        numel = param.numel()
+        # Extract and reshape
+        new_param = param_vector[pointer : pointer + numel].view_as(param).to(param.dtype)
+        new_state_dict[name] = new_param
+        pointer += numel
+
+    model.load_state_dict(new_state_dict)
+    return model
 
 
 # Calculate and return the accuracy and F1
@@ -63,26 +82,6 @@ def get_accuracy_and_f1(model):
     return accuracy, f1
 
 
-# Convert param_vector to model state_dict. Then call
-# load_state_dict() on model and return the model
-def vector_to_model(model, param_vector):
-    state_dict = model.state_dict()
-    new_state_dict = {}
-    pointer = 0
-
-    for name, param in state_dict.items():
-        numel = param.numel()
-        # Extract and reshape
-        new_param = param_vector[pointer : pointer + numel].view_as(param).to(param.dtype)
-        new_state_dict[name] = new_param
-        pointer += numel
-
-    model.load_state_dict(new_state_dict)
-    return model
-
-
-peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
-
 # 1. Load mrpc dataset
 print("Loading mrpc dataset")
 
@@ -101,7 +100,7 @@ datasets = load_dataset("glue", "mrpc")
 def tokenize_function(examples):
     # max_length=None => use the model max length (it's actually the default)
     outputs = tokenizer(
-        examples["sentence1"], examples["sentence2"], truncation=True, max_length=64, padding="max_length"
+        examples["sentence1"], examples["sentence2"], truncation=True, max_length=128, padding="max_length"
     )
     return outputs
 
@@ -151,9 +150,7 @@ mrpc_test_dataset = TensorDataset(
 
 # 2. Load a pretrained RobertaLarge model
 print("Loading RobertaLarge model")
-model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
-model = get_peft_model(model, peft_config)
-model.print_trainable_parameters()
+model_with_adapter.print_trainable_parameters()
 
 # 3. Define loss and optimizer
 criterion = nn.CrossEntropyLoss()
@@ -165,7 +162,7 @@ mrpc_problem = SupervisedTransformerNE(
     loss_func=criterion,  # Minimizing CrossEntropyLoss
     minibatch_size=minibatch_size,  # With a minibatch size of 1024
     # common_minibatch = True,  # Always using the same minibatch across all solutions on an actor
-    num_actors=16,  # The total number of CPUs used
+    num_actors="max",  # The total number of CPUs used
     # num_gpus_per_actor = 'max',  # Dividing all available GPUs between the actors
     # subbatch_size = subbatch_size,  # Evaluating solutions in sub-batches of size 50 ensures we won't run out of GPU memory for individual workers
 )
