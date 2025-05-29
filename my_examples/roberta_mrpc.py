@@ -22,9 +22,16 @@ mrpc_training_dataset = None
 train_dataloader = None
 device = "cpu"
 model_name_or_path = "roberta-large"
-model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
-peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
-model_with_adapter = get_peft_model(model, peft_config)
+
+
+def get_model_with_adapter():
+    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
+    peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
+    model_with_adapter = get_peft_model(model, peft_config)
+    return model_with_adapter
+
+
+model_with_adapter = get_model_with_adapter()
 
 
 # Print the accuracy and F1 measure for
@@ -125,6 +132,11 @@ def collate_fn(examples):
 print(f"Number of rows in training set: {len(tokenized_datasets['train'])}")
 print(f"Number of rows in validation set: {len(tokenized_datasets['validation'])}")
 
+num_minibatches = len(tokenized_datasets['train']) // minibatch_size
+
+print(f"Number of minibatches: {num_minibatches}")
+print(f"Minibatch size: {minibatch_size}")
+
 train_dataloader = DataLoader(
     tokenized_datasets["train"], shuffle=True, collate_fn=collate_fn, batch_size=minibatch_size
 )
@@ -158,11 +170,12 @@ criterion = nn.CrossEntropyLoss()
 # 5. Define the problem
 mrpc_problem = SupervisedTransformerNE(
     dataset=mrpc_training_dataset,  # Using the dataset specified earlier
-    network=model,  # Training the RobertaLarge module loaded earlier
+    network=get_model_with_adapter,  # Training the RobertaLarge module loaded earlier
     loss_func=criterion,  # Minimizing CrossEntropyLoss
     minibatch_size=minibatch_size,  # With a minibatch size of 1024
-    # common_minibatch = True,  # Always using the same minibatch across all solutions on an actor
-    num_actors="max",  # The total number of CPUs used
+    num_minibatches=num_minibatches,
+    # common_minibatch=True,  # Always using the same minibatch across all solutions on an actor
+    # num_actors="max",  # The total number of CPUs used
     # num_gpus_per_actor = 'max',  # Dividing all available GPUs between the actors
     # subbatch_size = subbatch_size,  # Evaluating solutions in sub-batches of size 50 ensures we won't run out of GPU memory for individual workers
 )
