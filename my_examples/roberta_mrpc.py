@@ -1,203 +1,154 @@
+import evaluate
 import torch
-import torch.nn as nn
 from datasets import load_dataset
-from peft import LoraConfig, PeftConfig, PeftModel, PeftType, get_peft_model
-from sklearn.metrics import accuracy_score, f1_score
-from torch.utils.data import DataLoader, TensorDataset
+from peft import LoraConfig, get_peft_model
+from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from evotorch.algorithms import SNES
-from evotorch.core import Solution
+from evotorch.core import Problem, Solution
 from evotorch.logging import PandasLogger, StdOutLogger
-from evotorch.neuroevolution import SupervisedTransformerNE
-from evotorch.neuroevolution.net import count_parameters
 
-number_of_generations = 200
-population_size = 12
 minibatch_size = 32
-radius_init = 0.1
-# subbatch_size = population_size // 2
-searcher = None
-mrpc_training_dataset = None
-train_dataloader = None
+solution_length = 1838082
 device = "cpu"
-model_name_or_path = "roberta-large"
-
-
-def get_model_with_adapter():
-    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
-    peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
-    model_with_adapter = get_peft_model(model, peft_config)
-    return model_with_adapter
-
-
-model_with_adapter = get_model_with_adapter()
-
-
-# Print the accuracy and F1 measure for
-# the best solution in each generation
-def evaluate_best_solution_in_generation():
-    pop_best_solution: Solution = searcher.status["pop_best"].clone()
-
-    # Flattened parameters from EvoTorch (1D tensor)
-    param_vector = pop_best_solution.values
-
-    model = vector_to_model(model_with_adapter, param_vector)
-
-    accuracy, f1 = get_accuracy_and_f1(model)
-
-    print(f"Accuracy: {accuracy:.4f}, F1 Score: {f1:.4f}")
 
 
 # Convert param_vector to model state_dict. Then call
-# load_state_dict() on model and return the model
-def vector_to_model(model, param_vector):
-    state_dict = model.state_dict()
-    new_state_dict = {}
+# load_state_dict() on model and return the updated model
+# This method updates only the model's the PEFT adapter
+# weights based on the solution's parameter vector
+def update_model(model, param_vector):
+    new_state_dict = model.state_dict().copy()
     pointer = 0
 
-    for name, param in state_dict.items():
-        numel = param.numel()
-        # Extract and reshape
-        new_param = param_vector[pointer : pointer + numel].view_as(param).to(param.dtype)
-        new_state_dict[name] = new_param
-        pointer += numel
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            numel = param.numel()
+            print(f"name: {name}, numel : {numel}")
+
+            # Extract and reshape
+            new_param = param_vector[pointer : pointer + numel].view_as(param).to(param.dtype)
+            new_state_dict[name] = new_param
+            pointer += numel
 
     model.load_state_dict(new_state_dict)
     return model
 
 
-# Calculate and return the accuracy and F1
-# measure of the model for the dataset
-def get_accuracy_and_f1(model):
-    all_preds = []
-    all_labels = []
+def get_dataloader(split, model_name_or_path):
+    print("Loading mrpc dataset")
 
-    model.to(device)
+    allowed = {"train", "test", "validatation"}
+    if split not in allowed:
+        raise ValueError(f"split must be one of {allowed}, got '{split}'")
+
+    if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
+        padding_side = "left"
+    else:
+        padding_side = "right"
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, padding_side=padding_side)
+    if getattr(tokenizer, "pad_token_id") is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    datasets = load_dataset("glue", "mrpc")
+
+    def tokenize_function(examples):
+        # max_length=None => use the model max length (it's actually the default)
+        outputs = tokenizer(
+            examples["sentence1"], examples["sentence2"], truncation=True, max_length=128, padding="max_length"
+        )
+        return outputs
+
+    tokenized_datasets = datasets.map(
+        tokenize_function,
+        batched=True,
+        remove_columns=["idx", "sentence1", "sentence2"],
+    )
+
+    # We also rename the 'label' column to 'labels' which is the expected name for labels
+    # by the models of the transformers library
+    tokenized_datasets = tokenized_datasets.rename_column("label", "labels")
+
+    tokenized_datasets.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
+    def collate_fn(examples):
+        return tokenizer.pad(examples, padding="longest", return_tensors="pt")
+
+    print(f"Number of rows in training set: {len(tokenized_datasets['train'])}")
+    print(f"Number of rows in training set: {len(tokenized_datasets['test'])}")
+    print(f"Number of rows in validation set: {len(tokenized_datasets['validation'])}")
+
+    num_minibatches = len(tokenized_datasets[split]) // minibatch_size
+
+    print(f"Number of minibatches: {num_minibatches}")
+    print(f"Minibatch size: {minibatch_size}")
+
+    train_dataloader = DataLoader(
+        tokenized_datasets[split], shuffle=True, collate_fn=collate_fn, batch_size=minibatch_size
+    )
+
+    return train_dataloader
+
+
+def evaluate_model(model, dataloader, metric):
     model.eval()
-    for step, batch in enumerate(train_dataloader):
+    for step, batch in enumerate(dataloader):
         batch.to(device)
         with torch.no_grad():
             outputs = model(**batch)
         predictions = outputs.logits.argmax(dim=-1)
-        all_preds.extend(predictions.cpu().numpy())
-        all_labels.extend(batch["labels"].cpu().numpy())
+        predictions, references = predictions, batch["labels"]
+        metric.add_batch(
+            predictions=predictions,
+            references=references,
+        )
 
-    accuracy = accuracy_score(all_labels, all_preds)
-    f1 = f1_score(all_labels, all_preds, average="weighted")  # or 'macro', 'micro', 'binary'
-
-    return accuracy, f1
-
-
-# 1. Load mrpc dataset
-print("Loading mrpc dataset")
-
-if any(k in model_name_or_path for k in ("gpt", "opt", "bloom")):
-    padding_side = "left"
-else:
-    padding_side = "right"
-
-tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, padding_side=padding_side)
-if getattr(tokenizer, "pad_token_id") is None:
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-
-datasets = load_dataset("glue", "mrpc")
+    eval_metric = metric.compute()
+    return eval_metric
 
 
-def tokenize_function(examples):
-    # max_length=None => use the model max length (it's actually the default)
-    outputs = tokenizer(
-        examples["sentence1"], examples["sentence2"], truncation=True, max_length=128, padding="max_length"
-    )
-    return outputs
+class PeftModel(Problem):
+    def __init__(self, solution_length, model_name_or_path, model_with_adapter):
+        super().__init__(
+            objective_sense="max",
+            solution_length=solution_length,
+            initial_bounds=(-1, 1),
+        )
+
+        self.model_name_or_path = model_name_or_path
+        self.model_with_adapter = model_with_adapter
+        self.train_dataloader = get_dataloader(split="train", model_name_or_path=model_name_or_path)
+        # self.metric = evaluate.load("glue", "mrpc")
+
+    def _evaluate(self, solution: Solution):
+        param_vector = solution.values
+        updated_model = update_model(self.model_with_adapter, param_vector)
+        metric = evaluate.load("glue", "mrpc")
+        eval_metric = evaluate_model(updated_model, self.train_dataloader, metric)
+        # eval_metric has accuracy and f1 as dictionary keys
+        solution.set_evals(eval_metric["accuracy"])
 
 
-tokenized_datasets = datasets.map(
-    tokenize_function,
-    batched=True,
-    remove_columns=["idx", "sentence1", "sentence2"],
-)
+def evolve_peft_model():
+    model_name_or_path = "roberta-large"
 
-# We also rename the 'label' column to 'labels' which is the expected name for labels
-# by the models of the transformers library
-tokenized_datasets = tokenized_datasets.rename_column("label", "labels")
+    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
+    peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
+    model_with_adapter = get_peft_model(model, peft_config)
+    number_of_trainable_params = sum(p.numel() for p in model_with_adapter.parameters() if p.requires_grad)
 
-tokenized_datasets.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+    problem = PeftModel(number_of_trainable_params, model_name_or_path, model_with_adapter)
+    searcher = SNES(problem, popsize=2, stdev_init=5)
+    _ = StdOutLogger(searcher, interval=1)
+    pandas_logger = PandasLogger(searcher, interval=1)
+
+    searcher.run(2)
+
+    print("Visualizing the progress")
+    pandas_logger.to_dataframe().mean_eval.plot()
 
 
-def collate_fn(examples):
-    return tokenizer.pad(examples, padding="longest", return_tensors="pt")
-
-
-print(f"Number of rows in training set: {len(tokenized_datasets['train'])}")
-print(f"Number of rows in validation set: {len(tokenized_datasets['validation'])}")
-
-num_minibatches = len(tokenized_datasets['train']) // minibatch_size
-
-print(f"Number of minibatches: {num_minibatches}")
-print(f"Minibatch size: {minibatch_size}")
-
-train_dataloader = DataLoader(
-    tokenized_datasets["train"], shuffle=True, collate_fn=collate_fn, batch_size=minibatch_size
-)
-
-# Create TensorDataset with masked data
-mrpc_training_dataset = TensorDataset(
-    tokenized_datasets["train"]["input_ids"],
-    tokenized_datasets["train"]["attention_mask"],
-    tokenized_datasets["train"]["labels"],
-)
-
-mrpc_validation_dataset = TensorDataset(
-    tokenized_datasets["validation"]["input_ids"],
-    tokenized_datasets["validation"]["attention_mask"],
-    tokenized_datasets["validation"]["labels"],
-)
-
-mrpc_test_dataset = TensorDataset(
-    tokenized_datasets["test"]["input_ids"],
-    tokenized_datasets["test"]["attention_mask"],
-    tokenized_datasets["test"]["labels"],
-)
-
-# 2. Load a pretrained RobertaLarge model
-print("Loading RobertaLarge model")
-model_with_adapter.print_trainable_parameters()
-
-# 3. Define loss and optimizer
-criterion = nn.CrossEntropyLoss()
-
-# 5. Define the problem
-mrpc_problem = SupervisedTransformerNE(
-    dataset=mrpc_training_dataset,  # Using the dataset specified earlier
-    network=get_model_with_adapter,  # Training the RobertaLarge module loaded earlier
-    loss_func=criterion,  # Minimizing CrossEntropyLoss
-    minibatch_size=minibatch_size,  # With a minibatch size of 1024
-    num_minibatches=num_minibatches,
-    # common_minibatch=True,  # Always using the same minibatch across all solutions on an actor
-    # num_actors="max",  # The total number of CPUs used
-    # num_gpus_per_actor = 'max',  # Dividing all available GPUs between the actors
-    # subbatch_size = subbatch_size,  # Evaluating solutions in sub-batches of size 50 ensures we won't run out of GPU memory for individual workers
-)
-
-# 6. Define the searcher
-searcher = SNES(
-    mrpc_problem,
-    popsize=population_size,
-    radius_init=radius_init,  # Initial radius of the search distribution
-)
-
-searcher.after_step_hook.append(evaluate_best_solution_in_generation)
-
-# 7. Define the loggers
-stdout_logger = StdOutLogger(searcher, interval=1)
-pandas_logger = PandasLogger(searcher, interval=1)
-
-# 8. Run the evolution
-print("Starting the evolution")
-for idx in range(number_of_generations):
-    searcher.step()
-
-# 10. Visualize the progress
-print("Visualizing the progress")
-pandas_logger.to_dataframe().mean_eval.plot()
+if __name__ == "__main__":
+    evolve_peft_model()
