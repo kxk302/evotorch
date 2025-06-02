@@ -12,11 +12,14 @@ from evotorch.algorithms import SNES
 from evotorch.core import Problem, Solution
 from evotorch.logging import PandasLogger, StdOutLogger
 
+os.environ["CUDA_VISIBLE_DEVICES"] = '5'
+
 minibatch_size = 32
-population_size = 2
-device = "cpu"
+population_size = 4
+number_of_generations = 2
+device = "cuda:0"
 dtype = torch.float16
-model_dir = "./my_examples/roberta_mrpc_model"
+model_dir = "/opt/dlami/nvme/kaivan/evotorch/my_examples/roberta_mrpc_model"
 
 
 # After the evolution completes, save the best solution to file
@@ -132,6 +135,7 @@ def get_dataloader(split, model_name_or_path):
 
 
 def evaluate_model(model, dataloader, metric):
+    model.to(device)
     model.eval()
     for step, batch in enumerate(dataloader):
         batch.to(device)
@@ -154,9 +158,10 @@ class PeftModel(Problem):
             objective_sense="max",
             solution_length=solution_length,
             initial_bounds=(-1, 1),
-            # num_actors="max",
+            # num_actors=2,  # The total number of CPUs used
             dtype=dtype,
             device=device,
+            store_solution_stats=True,
         )
 
         self.model_name_or_path = model_name_or_path
@@ -183,10 +188,10 @@ def evolve_peft_model():
 
     problem = PeftModel(number_of_trainable_params, model_name_or_path, model_with_adapter, dtype=dtype, device=device)
     searcher = SNES(problem, popsize=population_size, stdev_init=5)
-    _ = StdOutLogger(searcher, interval=1)
+    stdout_logger = StdOutLogger(searcher, interval=1)
     pandas_logger = PandasLogger(searcher, interval=1)
 
-    searcher.run(2)
+    searcher.run(number_of_generations)
 
     # Save the best solution
     model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
