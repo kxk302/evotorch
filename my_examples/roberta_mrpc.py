@@ -1,7 +1,10 @@
+import os
+
 import evaluate
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
+from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
@@ -10,8 +13,44 @@ from evotorch.core import Problem, Solution
 from evotorch.logging import PandasLogger, StdOutLogger
 
 minibatch_size = 32
-solution_length = 1838082
+population_size = 2
 device = "cpu"
+dtype = torch.float16
+model_dir = "./my_examples/roberta_mrpc_model"
+
+
+# After the evolution completes, save the best solution to file
+def save_best_solution(searcher, model_with_adapter):
+    best_solution: Solution = searcher.status["best"].clone()
+
+    # Flattened parameters from EvoTorch (1D tensor)
+    param_vector = best_solution.values
+
+    model = update_model(model_with_adapter, param_vector)
+
+    torch.save(model.state_dict(), os.path.join(model_dir, "model_weights.pth"))
+
+
+# Calculate and return the accuracy and F1
+# measure of the model for the dataset
+def get_accuracy_and_f1(model, dataloader):
+    all_preds = []
+    all_labels = []
+
+    model.to(device)
+    model.eval()
+    for step, batch in enumerate(dataloader):
+        batch.to(device)
+        with torch.no_grad():
+            outputs = model(**batch)
+        predictions = outputs.logits.argmax(dim=-1)
+        all_preds.extend(predictions.cpu().numpy())
+        all_labels.extend(batch["labels"].cpu().numpy())
+
+    accuracy = accuracy_score(all_labels, all_preds)
+    f1 = f1_score(all_labels, all_preds, average="weighted")  # or 'macro', 'micro', 'binary'
+
+    return accuracy, f1
 
 
 # Convert param_vector to model state_dict. Then call
@@ -25,7 +64,7 @@ def update_model(model, param_vector):
     for name, param in model.named_parameters():
         if param.requires_grad:
             numel = param.numel()
-            print(f"name: {name}, numel : {numel}")
+            # print(f"name: {name}, numel : {numel}")
 
             # Extract and reshape
             new_param = param_vector[pointer : pointer + numel].view_as(param).to(param.dtype)
@@ -110,11 +149,14 @@ def evaluate_model(model, dataloader, metric):
 
 
 class PeftModel(Problem):
-    def __init__(self, solution_length, model_name_or_path, model_with_adapter):
+    def __init__(self, solution_length, model_name_or_path, model_with_adapter, dtype, device):
         super().__init__(
             objective_sense="max",
             solution_length=solution_length,
             initial_bounds=(-1, 1),
+            # num_actors="max",
+            dtype=dtype,
+            device=device,
         )
 
         self.model_name_or_path = model_name_or_path
@@ -139,12 +181,24 @@ def evolve_peft_model():
     model_with_adapter = get_peft_model(model, peft_config)
     number_of_trainable_params = sum(p.numel() for p in model_with_adapter.parameters() if p.requires_grad)
 
-    problem = PeftModel(number_of_trainable_params, model_name_or_path, model_with_adapter)
-    searcher = SNES(problem, popsize=2, stdev_init=5)
+    problem = PeftModel(number_of_trainable_params, model_name_or_path, model_with_adapter, dtype=dtype, device=device)
+    searcher = SNES(problem, popsize=population_size, stdev_init=5)
     _ = StdOutLogger(searcher, interval=1)
     pandas_logger = PandasLogger(searcher, interval=1)
 
     searcher.run(2)
+
+    # Save the best solution
+    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
+    model_with_adapter = get_peft_model(model, peft_config)
+    save_best_solution(searcher, model_with_adapter)
+
+    # Reconstruct the model architecture
+    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
+    model_with_adapter = get_peft_model(model, peft_config)
+    model_with_adapter.load_state_dict(torch.load(os.path.join(model_dir, "model_weights.pth")))
+    accuracy, f1 = get_accuracy_and_f1(model_with_adapter, problem.train_dataloader)
+    print(f"Best Model -> Accuracy: {accuracy:.4f}, F1 Score: {f1:.4f}")
 
     print("Visualizing the progress")
     pandas_logger.to_dataframe().mean_eval.plot()
