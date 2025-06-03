@@ -18,6 +18,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 minibatch_size = 32
 population_size = 10
 number_of_generations = 2
+number_of_actors = 10
 device = "cpu"
 dtype = torch.float16
 
@@ -158,8 +159,8 @@ class PeftModel(Problem):
             objective_sense="max",
             solution_length=solution_length,
             initial_bounds=(-1, 1),
-            num_actors=10,
-            num_gpus_per_actor=0.1,
+            num_actors=number_of_actors,
+            num_gpus_per_actor=1/number_of_actors,
             dtype=dtype,
             device=device,
             store_solution_stats=True,
@@ -194,11 +195,12 @@ def evolve_peft_model(output_dir):
     _ = StdOutLogger(searcher, interval=1)
     pandas_logger = PandasLogger(searcher, interval=1)
 
-    searcher.run(number_of_generations)
+    for _ in range(number_of_generations):
+        searcher.step()
 
-    # Save the best solution
-    model_with_adapter = get_model_with_adapter(model_name_or_path)
-    save_best_solution(searcher, model_with_adapter, output_dir)
+        # Save the best solution
+        model_with_adapter = get_model_with_adapter(model_name_or_path)
+        save_best_solution(searcher, model_with_adapter, output_dir)
 
     # Reconstruct the model architecture
     model_with_adapter = get_model_with_adapter(model_name_or_path)
@@ -207,7 +209,7 @@ def evolve_peft_model(output_dir):
     print(f"Best Model -> Accuracy: {accuracy:.4f}, F1 Score: {f1:.4f}")
 
     print("Save Pandas logger dataframe")
-    pandas_logger.to_dataframe().to_csv(os.path.join(output_dir, pandas_logger.csv), index=False)
+    pandas_logger.to_dataframe().to_csv(os.path.join(output_dir, "pandas_logger.csv"), index=False)
 
 
 if __name__ == "__main__":
