@@ -15,9 +15,9 @@ from evotorch.logging import PandasLogger, StdOutLogger
 os.environ["CUDA_VISIBLE_DEVICES"] = '5'
 
 minibatch_size = 32
-population_size = 4
+population_size = 10
 number_of_generations = 2
-device = "cuda:0"
+device = "cpu"
 dtype = torch.float16
 model_dir = "/opt/dlami/nvme/kaivan/evotorch/my_examples/roberta_mrpc_model"
 
@@ -36,7 +36,7 @@ def save_best_solution(searcher, model_with_adapter):
 
 # Calculate and return the accuracy and F1
 # measure of the model for the dataset
-def get_accuracy_and_f1(model, dataloader):
+def get_accuracy_and_f1(model, dataloader, device):
     all_preds = []
     all_labels = []
 
@@ -134,7 +134,7 @@ def get_dataloader(split, model_name_or_path):
     return train_dataloader
 
 
-def evaluate_model(model, dataloader, metric):
+def evaluate_model(model, dataloader, metric, device):
     model.to(device)
     model.eval()
     for step, batch in enumerate(dataloader):
@@ -158,7 +158,8 @@ class PeftModel(Problem):
             objective_sense="max",
             solution_length=solution_length,
             initial_bounds=(-1, 1),
-            # num_actors=2,  # The total number of CPUs used
+            num_actors=10,
+            num_gpus_per_actor=0.1,
             dtype=dtype,
             device=device,
             store_solution_stats=True,
@@ -167,15 +168,13 @@ class PeftModel(Problem):
         self.model_name_or_path = model_name_or_path
         self.model_with_adapter = model_with_adapter
         self.train_dataloader = get_dataloader(split="train", model_name_or_path=model_name_or_path)
-        # self.metric = evaluate.load("glue", "mrpc")
 
     def _evaluate(self, solution: Solution):
         param_vector = solution.values
         updated_model = update_model(self.model_with_adapter, param_vector)
         metric = evaluate.load("glue", "mrpc")
-        eval_metric = evaluate_model(updated_model, self.train_dataloader, metric)
-        # eval_metric has accuracy and f1 as dictionary keys
-        solution.set_evals(eval_metric["accuracy"])
+        accuracy, f1 = get_accuracy_and_f1(updated_model, self.train_dataloader, self.aux_device)
+        solution.set_evals(accuracy)
 
 
 def evolve_peft_model():
@@ -202,7 +201,7 @@ def evolve_peft_model():
     model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
     model_with_adapter = get_peft_model(model, peft_config)
     model_with_adapter.load_state_dict(torch.load(os.path.join(model_dir, "model_weights.pth")))
-    accuracy, f1 = get_accuracy_and_f1(model_with_adapter, problem.train_dataloader)
+    accuracy, f1 = get_accuracy_and_f1(model_with_adapter, problem.train_dataloader, device)
     print(f"Best Model -> Accuracy: {accuracy:.4f}, F1 Score: {f1:.4f}")
 
     print("Visualizing the progress")
