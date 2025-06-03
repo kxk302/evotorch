@@ -160,7 +160,7 @@ class PeftModel(Problem):
             solution_length=solution_length,
             initial_bounds=(-1, 1),
             num_actors=number_of_actors,
-            num_gpus_per_actor=1/number_of_actors,
+            num_gpus_per_actor=1 / number_of_actors,
             dtype=dtype,
             device=device,
             store_solution_stats=True,
@@ -214,7 +214,9 @@ def evolve_peft_model(output_dir):
 
 if __name__ == "__main__":
     argumentParser = argparse.ArgumentParser()
-    argumentParser.add_argument("--output_dir", "-o", type=str, required=True, help="Directory to save the best model, logger file, etc.")
+    argumentParser.add_argument(
+        "--output_dir", "-o", type=str, required=True, help="Directory to save the best model, logger file, etc."
+    )
     args = argumentParser.parse_args()
 
     evolve_peft_model(args.output_dir)
