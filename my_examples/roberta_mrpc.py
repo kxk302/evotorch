@@ -1,3 +1,4 @@
+import argparse
 import os
 
 import evaluate
@@ -12,18 +13,17 @@ from evotorch.algorithms import SNES
 from evotorch.core import Problem, Solution
 from evotorch.logging import PandasLogger, StdOutLogger
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '5'
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 minibatch_size = 32
 population_size = 10
 number_of_generations = 2
 device = "cpu"
 dtype = torch.float16
-model_dir = "/opt/dlami/nvme/kaivan/evotorch/my_examples/roberta_mrpc_model"
 
 
 # After the evolution completes, save the best solution to file
-def save_best_solution(searcher, model_with_adapter):
+def save_best_solution(searcher, model_with_adapter, output_dir):
     best_solution: Solution = searcher.status["best"].clone()
 
     # Flattened parameters from EvoTorch (1D tensor)
@@ -31,7 +31,7 @@ def save_best_solution(searcher, model_with_adapter):
 
     model = update_model(model_with_adapter, param_vector)
 
-    torch.save(model.state_dict(), os.path.join(model_dir, "model_weights.pth"))
+    torch.save(model.state_dict(), os.path.join(output_dir, "model_weights.pth"))
 
 
 # Calculate and return the accuracy and F1
@@ -172,41 +172,47 @@ class PeftModel(Problem):
     def _evaluate(self, solution: Solution):
         param_vector = solution.values
         updated_model = update_model(self.model_with_adapter, param_vector)
-        metric = evaluate.load("glue", "mrpc")
         accuracy, f1 = get_accuracy_and_f1(updated_model, self.train_dataloader, self.aux_device)
         solution.set_evals(accuracy)
 
 
-def evolve_peft_model():
-    model_name_or_path = "roberta-large"
-
+def get_model_with_adapter(model_name_or_path):
     model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
     peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
     model_with_adapter = get_peft_model(model, peft_config)
+    return model_with_adapter
+
+
+def evolve_peft_model(output_dir):
+    model_name_or_path = "roberta-large"
+
+    model_with_adapter = get_model_with_adapter(model_name_or_path)
     number_of_trainable_params = sum(p.numel() for p in model_with_adapter.parameters() if p.requires_grad)
 
     problem = PeftModel(number_of_trainable_params, model_name_or_path, model_with_adapter, dtype=dtype, device=device)
     searcher = SNES(problem, popsize=population_size, stdev_init=5)
-    stdout_logger = StdOutLogger(searcher, interval=1)
+    _ = StdOutLogger(searcher, interval=1)
     pandas_logger = PandasLogger(searcher, interval=1)
 
     searcher.run(number_of_generations)
 
     # Save the best solution
-    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
-    model_with_adapter = get_peft_model(model, peft_config)
-    save_best_solution(searcher, model_with_adapter)
+    model_with_adapter = get_model_with_adapter(model_name_or_path)
+    save_best_solution(searcher, model_with_adapter, output_dir)
 
     # Reconstruct the model architecture
-    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
-    model_with_adapter = get_peft_model(model, peft_config)
-    model_with_adapter.load_state_dict(torch.load(os.path.join(model_dir, "model_weights.pth")))
+    model_with_adapter = get_model_with_adapter(model_name_or_path)
+    model_with_adapter.load_state_dict(torch.load(os.path.join(output_dir, "model_weights.pth")))
     accuracy, f1 = get_accuracy_and_f1(model_with_adapter, problem.train_dataloader, device)
     print(f"Best Model -> Accuracy: {accuracy:.4f}, F1 Score: {f1:.4f}")
 
-    print("Visualizing the progress")
-    pandas_logger.to_dataframe().mean_eval.plot()
+    print("Save Pandas logger dataframe")
+    pandas_logger.to_dataframe().to_csv(os.path.join(output_dir, pandas_logger.csv), index=False)
 
 
 if __name__ == "__main__":
-    evolve_peft_model()
+    argumentParser = argparse.ArgumentParser()
+    argumentParser.add_argument("--output_dir", "-o", type=str, required=True, help="Directory to save the best model, logger file, etc.")
+    args = argumentParser.parse_args()
+
+    evolve_peft_model(args.output_dir)
