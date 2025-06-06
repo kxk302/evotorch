@@ -9,9 +9,10 @@ from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from evotorch.algorithms import SNES
+from evotorch.algorithms import GeneticAlgorithm
 from evotorch.core import Problem, Solution
 from evotorch.logging import PandasLogger, StdOutLogger
+from evotorch.operators import GaussianMutation, OnePointCrossOver
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
@@ -158,7 +159,7 @@ class PeftModel(Problem):
         super().__init__(
             objective_sense="max",
             solution_length=solution_length,
-            initial_bounds=(-1, 1),
+            initial_bounds=(-1.0, 1.0),
             num_actors=number_of_actors,
             num_gpus_per_actor=1 / number_of_actors,
             dtype=dtype,
@@ -191,7 +192,14 @@ def evolve_peft_model(output_dir):
     number_of_trainable_params = sum(p.numel() for p in model_with_adapter.parameters() if p.requires_grad)
 
     problem = PeftModel(number_of_trainable_params, model_name_or_path, model_with_adapter, dtype=dtype, device=device)
-    searcher = SNES(problem, popsize=population_size, stdev_init=5)
+    searcher = GeneticAlgorithm(
+        problem,
+        popsize=population_size,
+        operators=[
+            OnePointCrossOver(problem, tournament_size=4),
+            GaussianMutation(problem, stdev=0.1),
+        ],
+    )
     _ = StdOutLogger(searcher, interval=1)
     pandas_logger = PandasLogger(searcher, interval=1)
 
