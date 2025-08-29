@@ -60,7 +60,7 @@ def get_accuracy_f1_and_loss(dataloader, device):
 
     model_with_adapter.eval()
     for step, batch in enumerate(dataloader):
-        batch.to(device)
+        batch = {k: v.to(device) for k, v in batch.items()}
         with torch.no_grad():
             outputs = model_with_adapter(**batch)
         predictions = outputs.logits.argmax(dim=-1)
@@ -194,7 +194,7 @@ class PeftModel(Problem):
         super().__init__(
             objective_sense="max",
             solution_length=solution_length,
-            initial_bounds=(-1.0, 1.0),
+            initial_bounds=(-0.5, 0.5),
             num_actors=number_of_actors,
             num_gpus_per_actor=(1 / number_of_actors),
             dtype=dtype,
@@ -222,7 +222,7 @@ def evolve_peft_model(output_dir, random_seed):
         popsize=population_size,
         operators=[
             OnePointCrossOver(problem, tournament_size=4),
-            GaussianMutation(problem, stdev=0.1),
+            GaussianMutation(problem, stdev=0.05),
         ],
     )
     _ = StdOutLogger(searcher, interval=1)
