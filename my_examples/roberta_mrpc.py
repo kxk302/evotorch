@@ -16,7 +16,7 @@ from evotorch.operators import GaussianMutation, OnePointCrossOver
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
-population_size = 2
+population_size = 3
 number_of_generations = 2
 number_of_actors = 1
 dtype = torch.float16
@@ -238,7 +238,7 @@ def evolve_peft_model(output_dir, random_seed):
 
     # Reconstruct the model architecture
     model_with_adapter.load_state_dict(torch.load(os.path.join(output_dir, "model_weights.pth")))
-    accuracy, f1, loss = get_accuracy_f1_and_loss(model_with_adapter, problem.train_dataloader, device)
+    accuracy, f1, loss = get_accuracy_f1_and_loss(problem.train_dataloader)
     print(f"Best Model -> Accuracy: {accuracy:.4f}, F1 Score: {f1:.4f}, loss : {loss:.4f}")
 
     print("Save Pandas logger dataframe")
