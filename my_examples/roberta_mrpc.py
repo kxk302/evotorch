@@ -54,7 +54,7 @@ def save_best_solution(searcher, output_dir):
 
 # Calculate and return the accuracy and F1
 # measure of the model for the dataset
-def get_accuracy_f1_and_loss(dataloader, device):
+def get_accuracy_f1_and_loss(dataloader):
     all_preds = []
     all_labels = []
 
@@ -208,7 +208,7 @@ class PeftModel(Problem):
     def _evaluate(self, solution: Solution):
         param_vector = solution.values.to(device)
         update_model(param_vector)
-        accuracy, f1, loss = get_accuracy_f1_and_loss(self.train_dataloader, self.aux_device)
+        accuracy, f1, loss = get_accuracy_f1_and_loss(self.train_dataloader)
         solution.set_evals(accuracy)
 
 
