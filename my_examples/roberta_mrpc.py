@@ -232,6 +232,11 @@ def evolve_peft_model(output_dir, random_seed):
         print(f"Starting generation {(idx + 1)}")
         searcher.step()
 
+        # Access the population's fitness values directly
+        fitness_values = searcher.population.evals
+        print(f"Fitness of all individuals in the population in generation {(idx + 1)}:")
+        print(fitness_values)
+
         # Save the best solution
         save_best_solution(searcher, output_dir)
         print(f"Ending generation {(idx + 1)}")
