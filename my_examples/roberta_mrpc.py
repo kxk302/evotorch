@@ -47,9 +47,9 @@ def save_best_solution(searcher, output_dir):
     # Flattened parameters from EvoTorch (1D tensor)
     param_vector = best_solution.values
 
-    model = update_model(param_vector)
+    update_model(param_vector)
 
-    torch.save(model.state_dict(), os.path.join(output_dir, "model_weights.pth"))
+    torch.save(model_with_adapter.state_dict(), os.path.join(output_dir, "model_weights.pth"))
 
 
 # Calculate and return the accuracy and F1
