@@ -228,11 +228,13 @@ def evolve_peft_model(output_dir, random_seed):
     _ = StdOutLogger(searcher, interval=1)
     pandas_logger = PandasLogger(searcher, interval=1)
 
-    for _ in range(number_of_generations):
+    for idx in range(number_of_generations):
+        print(f"Starting generation {(idx + 1)}")
         searcher.step()
 
         # Save the best solution
         save_best_solution(searcher, output_dir)
+        print(f"Ending generation {(idx + 1)}")
 
     # Reconstruct the model architecture
     model_with_adapter.load_state_dict(torch.load(os.path.join(output_dir, "model_weights.pth")))
