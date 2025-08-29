@@ -26,8 +26,8 @@ dataset_name = "glue"  # General Language Understanding Evaluation (GLUE)
 task_name = "mrpc"     # Microsoft Research Paraphrase Corpus (MRPC)
 max_length = 128
 peft_type = PeftType.LORA
-#device = "cuda:0"
-device = "cpu"
+device = "cuda:0"
+# device = "cpu"
 padding_side = "right" # Right padding for an encoder model like RoBerta
 
 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
