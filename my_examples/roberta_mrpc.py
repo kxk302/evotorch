@@ -19,7 +19,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 population_size = 3
 number_of_generations = 2
 number_of_actors = 1
-dtype = torch.float16
+dtype = torch.float32
 batch_size = 32
 model_name_or_path = "roberta-large"
 dataset_name = "glue"  # General Language Understanding Evaluation (GLUE)
@@ -221,7 +221,7 @@ def evolve_peft_model(output_dir, random_seed):
         problem,
         popsize=population_size,
         operators=[
-            OnePointCrossOver(problem, tournament_size=4),
+            # OnePointCrossOver(problem, tournament_size=4),
             GaussianMutation(problem, stdev=0.05),
         ],
     )
