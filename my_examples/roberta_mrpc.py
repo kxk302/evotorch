@@ -16,8 +16,8 @@ from evotorch.operators import GaussianMutation, OnePointCrossOver
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
-population_size = 3
-number_of_generations = 2
+population_size = 10
+number_of_generations = 5
 number_of_actors = 1
 dtype = torch.float32
 batch_size = 32
@@ -194,7 +194,7 @@ class PeftModel(Problem):
         super().__init__(
             objective_sense="max",
             solution_length=solution_length,
-            initial_bounds=(-0.5, 0.5),
+            initial_bounds=(-0.1, 0.1),
             num_actors=number_of_actors,
             num_gpus_per_actor=(1 / number_of_actors),
             dtype=dtype,
@@ -222,7 +222,7 @@ def evolve_peft_model(output_dir, random_seed):
     searcher = SNES(
         problem,
         popsize=population_size,        # population size
-        stdev_init=0.5,    # initial search std-dev
+        stdev_init=0.1,    # initial search std-dev
         center_init=0.0,   # initial mean (scalar or tensor of shape [d])
     )
 
