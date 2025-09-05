@@ -119,6 +119,7 @@ def update_model(lora_weights, classifier_weights):
                 new_state_dict[name] = new_param
                 pointer_2 += numel
 
+    print("update_model ended")
     model_with_adapter.load_state_dict(new_state_dict)
 
 
@@ -191,6 +192,7 @@ def get_dataloader(random_seed):
         batch_size=batch_size,
     )
 
+    print("get_dataloader ended")
     return train_dataloader, test_dataloader, eval_dataloader
 
 
@@ -291,6 +293,7 @@ class PeftObjectModel(Problem):
             }
             for _ in range(population_size)
         ]
+        print("_fill ended")
 
     # Evaluate one solution (you can also batch via _evaluate_batch)
     def _evaluate(self, solution: Solution):
@@ -304,6 +307,7 @@ class PeftObjectModel(Problem):
 
 # Receives an ObjectArray of parent values and returns an ObjectArray of mutated offspring
 def mutate(population: ObjectArray) -> ObjectArray:
+    print("Mutate started")
     mutated_population = []
 
     # print(f"Population size: {len(values)}")
@@ -353,6 +357,7 @@ def mutate(population: ObjectArray) -> ObjectArray:
         mutated_population.append(child)
 
     # return the children wrapped as ObjectArray so EvoTorch can handle them
+    print("Mutate ended")
     return as_tensor(mutated_population, dtype=object)
 
 
