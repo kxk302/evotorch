@@ -43,11 +43,11 @@ padding_side = "right"  # Right padding for an encoder model like RoBerta
 
 lora_mean = 0.00
 classifier_mean = 0.00
-lora_stddev = 0.5
+lora_stddev = 0.1
 classifier_stddev = 0.2
 individual_mutation_rate = 0.20
-gene_mutation_rate = 0.20
-noise_stddev = 0.1
+gene_mutation_rate = 0.005
+noise_stddev = 0.05
 
 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
 peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
@@ -98,10 +98,7 @@ def get_accuracy_f1_and_loss(dataloader):
 # Call load_state_dict() on model.
 # This method updates only the model's the PEFT adapter
 # weights based on the solution's parameter vector
-def update_model(param_vector):
-    lora_weights = param_vector["lora"]  # arbitrary Python access
-    classifier_weights = param_vector["classifier"]  # arbitrary Python access
-
+def update_model(lora_weights, classifier_weights):
     new_state_dict = model_with_adapter.state_dict().copy()
     pointer_1 = 0
     pointer_2 = 0
@@ -289,16 +286,17 @@ class PeftObjectModel(Problem):
 
         values[:] = [
             {
-                "x": generate_numbers(self.lora_length, self.lora_mean, self.lora_stddev),
-                "y": generate_numbers(self.classifier_length, self.classifier_mean, self.classifier_stddev),
+                "lora": generate_numbers(self.lora_length, self.lora_mean, self.lora_stddev),
+                "classifier": generate_numbers(self.classifier_length, self.classifier_mean, self.classifier_stddev),
             }
             for _ in range(population_size)
         ]
 
     # Evaluate one solution (you can also batch via _evaluate_batch)
     def _evaluate(self, solution: Solution):
-        param_vector = solution.values.to(device)
-        update_model(param_vector)
+        lora_weights = torch.tensor(list(solution.values["lora"]), dtype=dtype).to(device)
+        classifier_weights = torch.tensor(list(solution.values["classifer"]), dtype=dtype).to(device)
+        update_model(lora_weights, classifier_weights)
         accuracy, f1, loss = get_accuracy_f1_and_loss(self.train_dataloader)
         solution.set_evals(loss)
         print(f"loss: {loss}, accuracy: {accuracy}, f1: {f1}")
