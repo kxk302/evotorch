@@ -295,7 +295,7 @@ class PeftObjectModel(Problem):
     # Evaluate one solution (you can also batch via _evaluate_batch)
     def _evaluate(self, solution: Solution):
         lora_weights = torch.tensor(list(solution.values["lora"]), dtype=dtype).to(device)
-        classifier_weights = torch.tensor(list(solution.values["classifer"]), dtype=dtype).to(device)
+        classifier_weights = torch.tensor(list(solution.values["classifier"]), dtype=dtype).to(device)
         update_model(lora_weights, classifier_weights)
         accuracy, f1, loss = get_accuracy_f1_and_loss(self.train_dataloader)
         solution.set_evals(loss)
