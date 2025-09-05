@@ -28,7 +28,7 @@ from evotorch.tools import as_tensor
 os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
 population_size = 10
-number_of_generations = 5
+number_of_generations = 50
 number_of_actors = 1
 dtype = torch.float32
 batch_size = 32
@@ -75,7 +75,7 @@ def save_best_solution(searcher, output_dir):
 # Calculate and return the accuracy and F1
 # measure of the model for the dataset
 def get_accuracy_f1_and_loss(dataloader):
-    print("Started get_accuracy_f1_and_loss")
+    # print("Started get_accuracy_f1_and_loss")
     all_preds = []
     all_labels = []
 
@@ -91,7 +91,7 @@ def get_accuracy_f1_and_loss(dataloader):
     accuracy = accuracy_score(all_labels, all_preds)
     f1 = f1_score(all_labels, all_preds, average="weighted")  # or 'macro', 'micro', 'binary'
 
-    print("Finished get_accuracy_f1_and_loss")
+    # print("Finished get_accuracy_f1_and_loss")
     return accuracy, f1, outputs.loss
 
 
@@ -102,7 +102,7 @@ def get_accuracy_f1_and_loss(dataloader):
 # This method updates only the model's the PEFT adapter
 # weights based on the solution's parameter vector
 def update_model(lora_weights, classifier_weights):
-    print("Started update_model")
+    # print("Started update_model")
     new_state_dict = model_with_adapter.state_dict().copy()
     pointer_1 = 0
     pointer_2 = 0
@@ -124,7 +124,7 @@ def update_model(lora_weights, classifier_weights):
                 pointer_2 += numel
 
     model_with_adapter.load_state_dict(new_state_dict)
-    print("Finished update_model")
+    # print("Finished update_model")
 
 
 def get_dataloader(random_seed):
@@ -246,7 +246,7 @@ def generate_numbers(size, desired_mean, desired_std_dev):
     Returns:
         A list containing numbers with the specified mean and std dev.
     """
-    print("Started generate_numbers")
+    # print("Started generate_numbers")
     # 1. Generate numbers from a standard normal distribution (mean=0, std=1)
     numbers = np.random.normal(loc=0, scale=1, size=size)
 
@@ -256,7 +256,7 @@ def generate_numbers(size, desired_mean, desired_std_dev):
     # 3. Shift to desired mean
     numbers_scaled_and_shifted = numbers_scaled + desired_mean
 
-    print("Finished generate_numbers")
+    # print("Finished generate_numbers")
     return numbers_scaled_and_shifted.tolist()
 
 
@@ -306,14 +306,14 @@ class PeftObjectModel(Problem):
 
     # Evaluate one solution (you can also batch via _evaluate_batch)
     def _evaluate(self, solution: Solution):
-        print("Started _evaluate")
+        # print("Started _evaluate")
         lora_weights = torch.tensor(list(solution.values["lora"]), dtype=dtype).to(device)
         classifier_weights = torch.tensor(list(solution.values["classifier"]), dtype=dtype).to(device)
         update_model(lora_weights, classifier_weights)
         accuracy, f1, loss = get_accuracy_f1_and_loss(self.train_dataloader)
         solution.set_evals(loss)
         print(f"loss: {loss}, accuracy: {accuracy}, f1: {f1}")
-        print("Finished _evaluate")
+        # print("Finished _evaluate")
 
 
 # Receives an ObjectArray of parent values and returns an ObjectArray of mutated offspring
@@ -400,7 +400,7 @@ def evolve_peft_model(output_dir, random_seed):
     pandas_logger = PandasLogger(searcher, interval=1)
 
     for idx in range(number_of_generations):
-        print(f"Starting generation {(idx + 1)}")
+        print(f"************************************ Starting generation {(idx + 1)} ************************************")
         searcher.step()
 
         # Access the population's fitness values directly
