@@ -410,7 +410,7 @@ def evolve_peft_model(output_dir, random_seed):
 
         # Save the best solution
         save_best_solution(searcher, output_dir)
-        print(f"Ending generation {(idx + 1)}")
+        print(f"************************************ Finishing generation {(idx + 1)} ************************************")
 
     # Reconstruct the model architecture
     """
