@@ -44,10 +44,10 @@ padding_side = "right"  # Right padding for an encoder model like RoBerta
 lora_mean = 0.00
 classifier_mean = 0.00
 lora_stddev = 0.1
-classifier_stddev = 0.2
+classifier_stddev = 0.1
 individual_mutation_rate = 0.20
 gene_mutation_rate = 0.005
-noise_stddev = 0.05
+noise_stddev = 0.01
 
 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
 peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
@@ -61,19 +61,21 @@ if getattr(tokenizer, "pad_token_id") is None:
 
 # After the evolution completes, save the best solution to file
 def save_best_solution(searcher, output_dir):
+    print("Started save_best_solution")
     best_solution: Solution = searcher.status["best"].clone()
 
-    # Flattened parameters from EvoTorch (1D tensor)
-    param_vector = best_solution.values
-
-    update_model(param_vector)
+    lora_weights = torch.tensor(list(best_solution.values["lora"]), dtype=dtype).to(device)
+    classifier_weights = torch.tensor(list(best_solution.values["classifier"]), dtype=dtype).to(device)
+    update_model(lora_weights, classifier_weights)
 
     torch.save(model_with_adapter.state_dict(), os.path.join(output_dir, "model_weights.pth"))
+    print("Finished save_best_solution")
 
 
 # Calculate and return the accuracy and F1
 # measure of the model for the dataset
 def get_accuracy_f1_and_loss(dataloader):
+    print("Started get_accuracy_f1_and_loss")
     all_preds = []
     all_labels = []
 
@@ -89,6 +91,7 @@ def get_accuracy_f1_and_loss(dataloader):
     accuracy = accuracy_score(all_labels, all_preds)
     f1 = f1_score(all_labels, all_preds, average="weighted")  # or 'macro', 'micro', 'binary'
 
+    print("Finished get_accuracy_f1_and_loss")
     return accuracy, f1, outputs.loss
 
 
@@ -99,6 +102,7 @@ def get_accuracy_f1_and_loss(dataloader):
 # This method updates only the model's the PEFT adapter
 # weights based on the solution's parameter vector
 def update_model(lora_weights, classifier_weights):
+    print("Started update_model")
     new_state_dict = model_with_adapter.state_dict().copy()
     pointer_1 = 0
     pointer_2 = 0
@@ -119,12 +123,12 @@ def update_model(lora_weights, classifier_weights):
                 new_state_dict[name] = new_param
                 pointer_2 += numel
 
-    print("update_model ended")
     model_with_adapter.load_state_dict(new_state_dict)
+    print("Finished update_model")
 
 
 def get_dataloader(random_seed):
-    print("Loading mrpc dataset")
+    print("Started get_dataloader")
 
     # dataset features: ['sentence1', 'sentence2', 'label', 'idx']
     datasets = load_dataset(dataset_name, task_name)
@@ -192,7 +196,7 @@ def get_dataloader(random_seed):
         batch_size=batch_size,
     )
 
-    print("get_dataloader ended")
+    print("Finished get_dataloader")
     return train_dataloader, test_dataloader, eval_dataloader
 
 
@@ -215,6 +219,7 @@ def evaluate_model(model, dataloader, metric, device):
 
 
 def get_number_of_parameters(model):
+    print("Started get_accuracy_f1_and_loss")
     num_lora_params = 0
     num_classifier_params = 0
 
@@ -225,6 +230,7 @@ def get_number_of_parameters(model):
                 num_lora_params += numel
             if "classifier" in name:
                 num_classifier_params += numel
+    print("Finished get_accuracy_f1_and_loss")
     return num_lora_params, num_classifier_params
 
 
@@ -240,6 +246,7 @@ def generate_numbers(size, desired_mean, desired_std_dev):
     Returns:
         A list containing numbers with the specified mean and std dev.
     """
+    print("Started generate_numbers")
     # 1. Generate numbers from a standard normal distribution (mean=0, std=1)
     numbers = np.random.normal(loc=0, scale=1, size=size)
 
@@ -249,6 +256,7 @@ def generate_numbers(size, desired_mean, desired_std_dev):
     # 3. Shift to desired mean
     numbers_scaled_and_shifted = numbers_scaled + desired_mean
 
+    print("Finished generate_numbers")
     return numbers_scaled_and_shifted.tolist()
 
 
@@ -284,6 +292,7 @@ class PeftObjectModel(Problem):
 
     # Generate initial object-shaped solutions (population seeding)
     def _fill(self, values: ObjectArray):
+        print("Started _fill")
         population_size = len(values)
 
         values[:] = [
@@ -293,21 +302,23 @@ class PeftObjectModel(Problem):
             }
             for _ in range(population_size)
         ]
-        print("_fill ended")
+        print("Finished _fill")
 
     # Evaluate one solution (you can also batch via _evaluate_batch)
     def _evaluate(self, solution: Solution):
+        print("Started _evaluate")
         lora_weights = torch.tensor(list(solution.values["lora"]), dtype=dtype).to(device)
         classifier_weights = torch.tensor(list(solution.values["classifier"]), dtype=dtype).to(device)
         update_model(lora_weights, classifier_weights)
         accuracy, f1, loss = get_accuracy_f1_and_loss(self.train_dataloader)
         solution.set_evals(loss)
         print(f"loss: {loss}, accuracy: {accuracy}, f1: {f1}")
+        print("Finished _evaluate")
 
 
 # Receives an ObjectArray of parent values and returns an ObjectArray of mutated offspring
 def mutate(population: ObjectArray) -> ObjectArray:
-    print("Mutate started")
+    print("Started mutate")
     mutated_population = []
 
     # print(f"Population size: {len(values)}")
@@ -357,7 +368,7 @@ def mutate(population: ObjectArray) -> ObjectArray:
         mutated_population.append(child)
 
     # return the children wrapped as ObjectArray so EvoTorch can handle them
-    print("Mutate ended")
+    print("Finished mutate")
     return as_tensor(mutated_population, dtype=object)
 
 
