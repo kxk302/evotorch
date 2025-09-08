@@ -46,9 +46,9 @@ lora_stddev = 0.05
 lora_noise_stddev = 0.01
 classifier_mean = 0.00
 classifier_stddev = 0.01
-classifier_noise_stddev = 0.05
+classifier_noise_stddev = 0.01
 individual_mutation_rate = 0.50
-gene_mutation_rate = 0.001
+gene_mutation_rate = 0.0001
 
 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
 peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
