@@ -27,7 +27,7 @@ from evotorch.tools import as_tensor
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
-population_size = 10
+population_size = 20
 number_of_generations = 50
 number_of_actors = 1
 dtype = torch.float32
