@@ -42,12 +42,13 @@ device = "cuda:0"
 padding_side = "right"  # Right padding for an encoder model like RoBerta
 
 lora_mean = 0.00
+lora_stddev = 0.05
+lora_noise_stddev = 0.01
 classifier_mean = 0.00
-lora_stddev = 0.1
-classifier_stddev = 0.1
-individual_mutation_rate = 0.20
-gene_mutation_rate = 0.005
-noise_stddev = 0.01
+classifier_stddev = 0.01
+classifier_noise_stddev = 0.05
+individual_mutation_rate = 0.50
+gene_mutation_rate = 0.001
 
 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
 peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
@@ -350,7 +351,7 @@ def mutate(population: ObjectArray) -> ObjectArray:
 
         for idx_1 in idx_for_genes_to_mutate:
             # Add Gaussian noise to that weight
-            child["lora"][idx_1] += rng.normal(loc=0.0, scale=noise_stddev)
+            child["lora"][idx_1] += rng.normal(loc=0.0, scale=lora_noise_stddev)
         # print(f"x vector AFTER mutation: {child['x']}")
 
         # Pick a number of random indexes in the y weight vector to mutate
@@ -362,7 +363,7 @@ def mutate(population: ObjectArray) -> ObjectArray:
 
         for idx_2 in idx_for_genes_to_mutate:
             # Add Gaussian noise to that weight
-            child["classifier"][idx_2] += rng.normal(loc=0.0, scale=noise_stddev)
+            child["classifier"][idx_2] += rng.normal(loc=0.0, scale=classifier_noise_stddev)
         # print(f"y vector AFTER mutation: {child['y']}")
 
         mutated_population.append(child)
