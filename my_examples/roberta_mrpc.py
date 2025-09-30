@@ -3,6 +3,7 @@ import os
 
 import evaluate
 import torch
+import torch.nn as nn
 from datasets import load_dataset
 from peft import LoraConfig, PeftType, get_peft_model
 from sklearn.metrics import accuracy_score, f1_score
@@ -16,8 +17,8 @@ from evotorch.operators import GaussianMutation, OnePointCrossOver
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 
-population_size = 10
-number_of_generations = 5
+population_size = 5
+number_of_generations = 500
 number_of_actors = 1
 dtype = torch.float32
 batch_size = 32
@@ -57,6 +58,7 @@ def save_best_solution(searcher, output_dir):
 def get_accuracy_f1_and_loss(dataloader):
     all_preds = []
     all_labels = []
+    all_logits = []
 
     model_with_adapter.eval()
     for step, batch in enumerate(dataloader):
@@ -64,13 +66,22 @@ def get_accuracy_f1_and_loss(dataloader):
         with torch.no_grad():
             outputs = model_with_adapter(**batch)
         predictions = outputs.logits.argmax(dim=-1)
+        all_logits.extend(outputs.logits.cpu())
         all_preds.extend(predictions.cpu().numpy())
         all_labels.extend(batch["labels"].cpu().numpy())
 
     accuracy = accuracy_score(all_labels, all_preds)
     f1 = f1_score(all_labels, all_preds, average="weighted")  # or 'macro', 'micro', 'binary'
 
-    return accuracy, f1, outputs.loss
+    # Instantiate BCELoss criterion
+    ce_loss_criterion = nn.CrossEntropyLoss()
+
+    # Calculate the loss. Lists must be converted to float tensors BCELoss
+    all_labels_tensor = torch.tensor(all_labels).long()
+    all_logits_stacked = torch.stack(all_logits)
+    loss = ce_loss_criterion(all_logits_stacked, all_labels_tensor)
+
+    return accuracy, f1, loss
 
 
 # Make a copy of model_with_adapter's state_dict.
@@ -171,30 +182,12 @@ def get_dataloader(random_seed):
     return train_dataloader, test_dataloader, eval_dataloader
 
 
-def evaluate_model(model, dataloader, metric, device):
-    model.to(device)
-    model.eval()
-    for step, batch in enumerate(dataloader):
-        batch.to(device)
-        with torch.no_grad():
-            outputs = model(**batch)
-        predictions = outputs.logits.argmax(dim=-1)
-        predictions, references = predictions, batch["labels"]
-        metric.add_batch(
-            predictions=predictions,
-            references=references,
-        )
-
-    eval_metric = metric.compute()
-    return eval_metric
-
-
 class PeftModel(Problem):
     def __init__(self, solution_length, random_seed):
         super().__init__(
             objective_sense="max",
             solution_length=solution_length,
-            initial_bounds=(-0.1, 0.1),
+            initial_bounds=(-0.15, 0.15),
             num_actors=number_of_actors,
             num_gpus_per_actor=(1 / number_of_actors),
             dtype=dtype,
@@ -209,7 +202,7 @@ class PeftModel(Problem):
         param_vector = solution.values.to(device)
         update_model(param_vector)
         accuracy, f1, loss = get_accuracy_f1_and_loss(self.train_dataloader)
-        solution.set_evals(accuracy)
+        solution.set_evals(-loss)
 
 
 def evolve_peft_model(output_dir, random_seed):
@@ -222,8 +215,12 @@ def evolve_peft_model(output_dir, random_seed):
     searcher = SNES(
         problem,
         popsize=population_size,        # population size
-        stdev_init=0.1,    # initial search std-dev
-        center_init=0.0,   # initial mean (scalar or tensor of shape [d])
+        radius_init=0.15,
+        # stdev_init=0.0005,             # initial exploration scale
+        center_learning_rate=0.0001,   # mean update step
+        stdev_learning_rate=0.15,    # std update step
+        optimizer="clipup",
+        optimizer_config={"max_speed": 0.0002, "momentum": 0.9},
     )
 
     _ = StdOutLogger(searcher, interval=1)
