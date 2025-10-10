@@ -43,13 +43,15 @@ if getattr(tokenizer, "pad_token_id") is None:
 
 
 # After the evolution completes, save the best solution to file
-def save_best_solution(searcher, output_dir):
+def save_best_solution(searcher, output_dir, number_of_trainable_params, number_of_repeats):
     best_solution: Solution = searcher.status["best"].clone()
 
     # Flattened parameters from EvoTorch (1D tensor)
     param_vector = best_solution.values
 
-    update_model(param_vector)
+    param_vector_expanded = repeat_elements(param_vector, number_of_repeats)[number_of_trainable_params]
+
+    update_model(param_vector_expanded)
 
     torch.save(model_with_adapter.state_dict(), os.path.join(output_dir, "model_weights.pth"))
 
@@ -252,7 +254,7 @@ def evolve_peft_model(output_dir, random_seed, solution_length):
         print(fitness_values)
 
         # Save the best solution
-        save_best_solution(searcher, output_dir)
+        save_best_solution(searcher, output_dir, number_of_trainable_params, problem.number_of_repeats)
         print(f"Ending generation {(idx + 1)}")
 
     # Reconstruct the model architecture
