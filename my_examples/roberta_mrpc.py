@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 
 import evaluate
@@ -29,7 +30,7 @@ max_length = 128
 peft_type = PeftType.LORA
 device = "cuda:0"
 # device = "cpu"
-padding_side = "right" # Right padding for an encoder model like RoBerta
+padding_side = "right"  # Right padding for an encoder model like RoBerta
 
 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, return_dict=True)
 peft_config = LoraConfig(task_type="SEQ_CLS", inference_mode=False, r=8, lora_alpha=16, lora_dropout=0.1)
@@ -81,6 +82,7 @@ def get_accuracy_f1_and_loss(dataloader):
     all_logits_stacked = torch.stack(all_logits)
     loss = ce_loss_criterion(all_logits_stacked, all_labels_tensor)
 
+    print(f"loss: {loss}, accuracy: {accuracy}, f1: {f1}")
     return accuracy, f1, loss
 
 
@@ -137,7 +139,6 @@ def get_dataloader(random_seed):
         )
         return outputs
 
-
     # Applies tokenize_function to each example in the dataset. Efficient and parallelizable — much better than a for loop
     # Processes multiple examples at once (as batches). Much faster than processing one-by-one.
     # Drops original input columns from the dataset after tokenization
@@ -182,8 +183,15 @@ def get_dataloader(random_seed):
     return train_dataloader, test_dataloader, eval_dataloader
 
 
+def repeat_elements(input_tensor: torch.Tensor, num: int):
+    """
+    Repeats each element in input_tensor 'num' times.
+    """
+    return input_tensor.repeat_interleave(num)
+
+
 class PeftModel(Problem):
-    def __init__(self, solution_length, random_seed):
+    def __init__(self, number_of_trainable_params, random_seed, solution_length):
         super().__init__(
             objective_sense="max",
             solution_length=solution_length,
@@ -195,30 +203,38 @@ class PeftModel(Problem):
             store_solution_stats=True,
         )
 
+        # Since the number_of_trainable_params could be very large, we limit the solution length
+        # to solution_length, which is much smaller than number_of_trainable_params. We then repeat
+        # each element in the solution such that we have a tensor of size number_of_trainable_params.
+        # How many times we repeat each element is ceiling of (number_of_trainable_params/solution_length)
         self.random_seed = random_seed
+        self.number_of_trainable_params = number_of_trainable_params
+        self.number_of_repeats = math.ceil(number_of_trainable_params / solution_length)
         self.train_dataloader, self.test_dataloader, self.eval_dataloader = get_dataloader(self.random_seed)
 
     def _evaluate(self, solution: Solution):
         param_vector = solution.values.to(device)
-        update_model(param_vector)
+        param_vector_expanded = repeat_elements(param_vector, self.number_of_repeats)[:self.number_of_trainable_params]
+        update_model(param_vector_expanded)
         accuracy, f1, loss = get_accuracy_f1_and_loss(self.train_dataloader)
         solution.set_evals(-loss)
 
 
-def evolve_peft_model(output_dir, random_seed):
+def evolve_peft_model(output_dir, random_seed, solution_length):
 
     number_of_trainable_params = sum(p.numel() for p in model_with_adapter.parameters() if p.requires_grad)
+    print(f"number_of_trainable_params: {number_of_trainable_params}")
 
-    problem = PeftModel(number_of_trainable_params, random_seed)
+    problem = PeftModel(number_of_trainable_params, random_seed, solution_length)
 
     # Create the SNES searcher
     searcher = SNES(
         problem,
         popsize=population_size,        # population size
-        radius_init=0.15,
-        # stdev_init=0.0005,             # initial exploration scale
-        center_learning_rate=0.0001,   # mean update step
-        stdev_learning_rate=0.15,    # std update step
+        # radius_init=0.15,
+        stdev_init=0.005,             # initial exploration scale
+        center_learning_rate=0.2,   # mean update step
+        stdev_learning_rate=0.0014,    # std update step. 0.2 * (3 + log(n)) / sqrt(n) where n is the length of a solution
         optimizer="clipup",
         optimizer_config={"max_speed": 0.0002, "momentum": 0.9},
     )
@@ -254,6 +270,7 @@ if __name__ == "__main__":
         "--output_dir", "-o", type=str, required=True, help="Directory to save the best model, logger file, etc."
     )
     argumentParser.add_argument("-s", "--random_seed", type=int, help="Random seed for bootstrapping the training dataset", required=True)
+    argumentParser.add_argument("-l", "--solution_length", type=int, help="Length of a solution. Potentially less than the number of parameters being learned", required=True)
 
     args = argumentParser.parse_args()
 
@@ -261,4 +278,4 @@ if __name__ == "__main__":
     # Also, makes the shuffling of the datasets repeatable
     torch.manual_seed(args.random_seed)
 
-    evolve_peft_model(args.output_dir, args.random_seed)
+    evolve_peft_model(args.output_dir, args.random_seed, args.solution_length)
